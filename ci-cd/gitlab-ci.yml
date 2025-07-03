@@ -1,0 +1,374 @@
+# GitLab CI/CD Pipeline for AKC Infrastructure
+# This pipeline automates the deployment and management of AKC infrastructure
+
+stages:
+  - validate
+  - security-scan
+  - build
+  - test
+  - deploy-dev
+  - deploy-staging
+  - deploy-production
+  - monitor
+
+variables:
+  TERRAFORM_VERSION: "1.5.0"
+  HELM_VERSION: "3.12.0"
+  KUBECTL_VERSION: "1.27.0"
+  PODMAN_DRIVER: overlay
+  KUBE_NAMESPACE_DEV: "akc-dev"
+  KUBE_NAMESPACE_STAGING: "akc-staging"
+  KUBE_NAMESPACE_PROD: "akc-system"
+
+# Cache for dependencies
+cache:
+  paths:
+    - .terraform/
+    - helm/charts/
+    - ~/.kube/cache/
+
+# Before script - setup tools
+before_script:
+  - echo "Setting up CI/CD environment..."
+  - apk add --no-cache curl wget unzip
+  
+  # Install Terraform
+  - wget https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+  - unzip terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+  - mv terraform /usr/local/bin/
+  
+  # Install Helm
+  - wget https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz
+  - tar -zxvf helm-v${HELM_VERSION}-linux-amd64.tar.gz
+  - mv linux-amd64/helm /usr/local/bin/
+  
+  # Install kubectl
+  - wget https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl
+  - chmod +x kubectl
+  - mv kubectl /usr/local/bin/
+  
+  # Setup kubeconfig
+  - mkdir -p ~/.kube
+  - echo "$KUBE_CONFIG" | base64 -d > ~/.kube/config
+
+# Validation stage
+terraform-validate:
+  stage: validate
+  image: hashicorp/terraform:${TERRAFORM_VERSION}
+  script:
+    - cd terraform/clusters
+    - terraform init -backend=false
+    - terraform validate
+    - cd ../networking
+    - terraform init -backend=false
+    - terraform validate
+    - cd ../alteon
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - changes:
+        - terraform/**/*
+
+helm-lint:
+  stage: validate
+  image: alpine/helm:${HELM_VERSION}
+  script:
+    - helm lint helm/akc-controller/
+    - helm lint helm/akc-aggregator/
+    - helm lint helm/monitoring/
+  rules:
+    - changes:
+        - helm/**/*
+
+yaml-validate:
+  stage: validate
+  image: cytopia/yamllint
+  script:
+    - yamllint manifests/
+    - yamllint monitoring/
+  rules:
+    - changes:
+        - manifests/**/*
+        - monitoring/**/*
+
+# Security scanning stage
+terraform-security-scan:
+  stage: security-scan
+  image: bridgecrew/checkov:latest
+  script:
+    - checkov -d terraform/ --framework terraform --output cli --output junitxml --output-file-path console,results.xml
+  artifacts:
+    reports:
+      junit: results.xml
+    expire_in: 1 week
+  rules:
+    - changes:
+        - terraform/**/*
+
+helm-security-scan:
+  stage: security-scan
+  image: aquasec/trivy:latest
+  script:
+    - trivy config helm/akc-controller/
+    - trivy config helm/akc-aggregator/
+  rules:
+    - changes:
+        - helm/**/*
+
+# Build stage
+build-terraform-plan:
+  stage: build
+  image: hashicorp/terraform:${TERRAFORM_VERSION}
+  script:
+    - cd terraform/clusters
+    - terraform init
+    - terraform plan -out=tfplan-clusters
+    - cd ../networking
+    - terraform init
+    - terraform plan -out=tfplan-networking
+    - cd ../alteon
+    - terraform init
+    - terraform plan -out=tfplan-alteon
+  artifacts:
+    paths:
+      - terraform/clusters/tfplan-clusters
+      - terraform/networking/tfplan-networking
+      - terraform/alteon/tfplan-alteon
+    expire_in: 1 hour
+  rules:
+    - changes:
+        - terraform/**/*
+
+package-helm-charts:
+  stage: build
+  image: alpine/helm:${HELM_VERSION}
+  script:
+    - helm dependency update helm/akc-controller/
+    - helm dependency update helm/akc-aggregator/
+    - helm package helm/akc-controller/ -d charts/
+    - helm package helm/akc-aggregator/ -d charts/
+    - helm package helm/monitoring/ -d charts/
+  artifacts:
+    paths:
+      - charts/*.tgz
+    expire_in: 1 week
+  rules:
+    - changes:
+        - helm/**/*
+
+# Test stage
+test-helm-charts:
+  stage: test
+  image: alpine/helm:${HELM_VERSION}
+  script:
+    - helm template helm/akc-controller/ --debug
+    - helm template helm/akc-aggregator/ --debug
+    - echo "Helm charts syntax validation passed"
+  needs:
+    - package-helm-charts
+  rules:
+    - changes:
+        - helm/**/*
+
+test-kubernetes-manifests:
+  stage: test
+  image: bitnami/kubectl:${KUBECTL_VERSION}
+  script:
+    - kubectl apply --dry-run=client -f manifests/security/
+    - kubectl apply --dry-run=client -f manifests/services/
+    - kubectl apply --dry-run=client -f monitoring/prometheus/
+    - kubectl apply --dry-run=client -f monitoring/grafana/
+    - echo "Kubernetes manifests validation passed"
+  rules:
+    - changes:
+        - manifests/**/*
+        - monitoring/**/*
+
+# Development deployment
+deploy-dev:
+  stage: deploy-dev
+  image: alpine/helm:${HELM_VERSION}
+  environment:
+    name: development
+    url: https://akc-dev.example.com
+  script:
+    - echo "Deploying to development environment..."
+    
+    # Create namespace
+    - kubectl create namespace $KUBE_NAMESPACE_DEV --dry-run=client -o yaml | kubectl apply -f -
+    
+    # Deploy security manifests
+    - kubectl apply -f manifests/security/ -n $KUBE_NAMESPACE_DEV
+    
+    # Deploy AKC Controller
+    - helm upgrade --install akc-controller-dev helm/akc-controller/ 
+        --namespace $KUBE_NAMESPACE_DEV 
+        --set controller.config.alteon.host=$DEV_ALTEON_HOST
+        --set controller.config.vipPool.start=$DEV_VIP_START
+        --set controller.config.vipPool.end=$DEV_VIP_END
+        --wait --timeout=300s
+    
+    # Deploy monitoring
+    - kubectl apply -f monitoring/prometheus/ -n monitoring
+    - kubectl apply -f monitoring/grafana/ -n monitoring
+    
+    - echo "Development deployment completed"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  needs:
+    - package-helm-charts
+    - test-helm-charts
+
+# Staging deployment
+deploy-staging:
+  stage: deploy-staging
+  image: alpine/helm:${HELM_VERSION}
+  environment:
+    name: staging
+    url: https://akc-staging.example.com
+  script:
+    - echo "Deploying to staging environment..."
+    
+    # Create namespace
+    - kubectl create namespace $KUBE_NAMESPACE_STAGING --dry-run=client -o yaml | kubectl apply -f -
+    
+    # Deploy infrastructure with Terraform
+    - cd terraform/clusters
+    - terraform init
+    - terraform apply -auto-approve tfplan-clusters
+    - cd ../networking
+    - terraform init
+    - terraform apply -auto-approve tfplan-networking
+    
+    # Deploy AKC components
+    - helm upgrade --install akc-controller-staging helm/akc-controller/ 
+        --namespace $KUBE_NAMESPACE_STAGING 
+        --set controller.config.alteon.host=$STAGING_ALTEON_HOST
+        --set controller.image.tag=$CI_COMMIT_SHORT_SHA
+        --wait --timeout=600s
+    
+    - helm upgrade --install akc-aggregator-staging helm/akc-aggregator/ 
+        --namespace $KUBE_NAMESPACE_STAGING 
+        --set aggregator.config.alteon.host=$STAGING_ALTEON_HOST
+        --wait --timeout=600s
+    
+    # Run integration tests
+    - ./scripts/test-integration.sh $KUBE_NAMESPACE_STAGING
+    
+    - echo "Staging deployment completed"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  needs:
+    - build-terraform-plan
+    - package-helm-charts
+    - test-helm-charts
+  when: manual
+
+# Production deployment
+deploy-production:
+  stage: deploy-production
+  image: alpine/helm:${HELM_VERSION}
+  environment:
+    name: production
+    url: https://akc.example.com
+  script:
+    - echo "Deploying to production environment..."
+    
+    # Backup current configuration
+    - ./scripts/backup-config.sh $KUBE_NAMESPACE_PROD
+    
+    # Deploy infrastructure with Terraform
+    - cd terraform/clusters
+    - terraform init
+    - terraform apply -auto-approve tfplan-clusters
+    - cd ../networking
+    - terraform init
+    - terraform apply -auto-approve tfplan-networking
+    - cd ../alteon
+    - terraform init
+    - terraform apply -auto-approve tfplan-alteon
+    
+    # Deploy AKC components with blue-green strategy
+    - helm upgrade --install akc-controller-prod helm/akc-controller/ 
+        --namespace $KUBE_NAMESPACE_PROD 
+        --set controller.config.alteon.host=$PROD_ALTEON_HOST
+        --set controller.image.tag=$CI_COMMIT_SHORT_SHA
+        --set deployment.strategy.type=RollingUpdate
+        --set deployment.strategy.rollingUpdate.maxSurge=1
+        --set deployment.strategy.rollingUpdate.maxUnavailable=0
+        --wait --timeout=900s
+    
+    - helm upgrade --install akc-aggregator-prod helm/akc-aggregator/ 
+        --namespace $KUBE_NAMESPACE_PROD 
+        --set aggregator.config.alteon.host=$PROD_ALTEON_HOST
+        --wait --timeout=900s
+    
+    # Verify deployment
+    - kubectl rollout status deployment/akc-controller -n $KUBE_NAMESPACE_PROD
+    - kubectl rollout status deployment/akc-aggregator -n $KUBE_NAMESPACE_PROD
+    
+    # Run smoke tests
+    - ./scripts/smoke-tests.sh $KUBE_NAMESPACE_PROD
+    
+    - echo "Production deployment completed"
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - deploy-staging
+  when: manual
+
+# Monitoring stage
+deploy-monitoring:
+  stage: monitor
+  image: bitnami/kubectl:${KUBECTL_VERSION}
+  script:
+    - echo "Setting up monitoring and alerts..."
+    
+    # Deploy Prometheus and Grafana
+    - kubectl apply -f monitoring/prometheus/
+    - kubectl apply -f monitoring/grafana/
+    - kubectl apply -f monitoring/alertmanager/
+    
+    # Wait for monitoring to be ready
+    - kubectl wait --for=condition=Ready pods -l app.kubernetes.io/name=prometheus -n monitoring --timeout=300s
+    - kubectl wait --for=condition=Ready pods -l app.kubernetes.io/name=grafana -n monitoring --timeout=300s
+    
+    # Import Grafana dashboards
+    - ./scripts/import-dashboards.sh
+    
+    - echo "Monitoring setup completed"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  needs:
+    - deploy-production
+  when: manual
+
+# Cleanup job for development
+cleanup-dev:
+  stage: deploy-dev
+  image: alpine/helm:${HELM_VERSION}
+  script:
+    - echo "Cleaning up development environment..."
+    - helm uninstall akc-controller-dev -n $KUBE_NAMESPACE_DEV || true
+    - helm uninstall akc-aggregator-dev -n $KUBE_NAMESPACE_DEV || true
+    - kubectl delete namespace $KUBE_NAMESPACE_DEV || true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  when: manual
+  allow_failure: true
+
+# Rollback job
+rollback-production:
+  stage: deploy-production
+  image: alpine/helm:${HELM_VERSION}
+  script:
+    - echo "Rolling back production deployment..."
+    - helm rollback akc-controller-prod -n $KUBE_NAMESPACE_PROD
+    - helm rollback akc-aggregator-prod -n $KUBE_NAMESPACE_PROD
+    - kubectl rollout status deployment/akc-controller -n $KUBE_NAMESPACE_PROD
+    - kubectl rollout status deployment/akc-aggregator -n $KUBE_NAMESPACE_PROD
+    - echo "Rollback completed"
+  rules:
+    - if: $CI_COMMIT_TAG
+  when: manual
+  allow_failure: false

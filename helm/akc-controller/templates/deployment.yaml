@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "akc-controller.fullname" . }}
+  namespace: {{ .Values.controller.config.akc.namespace }}
+  labels:
+    {{- include "akc-controller.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.deployment.replicaCount }}
+  strategy:
+    {{- toYaml .Values.deployment.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "akc-controller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.deployment.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "akc-controller.selectorLabels" . | nindent 8 }}
+        {{- with .Values.deployment.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "akc-controller.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.controller.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.controller.securityContext | nindent 12 }}
+          image: "{{ .Values.controller.image.registry }}/{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+            - name: metrics
+              containerPort: 9114
+              protocol: TCP
+          env:
+            - name: AKC_NAMESPACE
+              value: {{ .Values.controller.config.akc.namespace }}
+            - name: AKC_LOG_LEVEL
+              value: {{ .Values.controller.config.akc.logLevel }}
+            - name: AKC_SYNC_INTERVAL
+              value: {{ .Values.controller.config.akc.syncInterval }}
+            - name: ALTEON_HOST
+              value: {{ .Values.controller.config.alteon.host }}
+            - name: ALTEON_PORT
+              value: {{ .Values.controller.config.alteon.port | quote }}
+            - name: ALTEON_USERNAME
+              value: {{ .Values.controller.config.alteon.username }}
+            - name: ALTEON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "akc-controller.secretName" . }}
+                  key: alteon-password
+            - name: ALTEON_SSL
+              value: {{ .Values.controller.config.alteon.ssl | quote }}
+            - name: ALTEON_TIMEOUT
+              value: {{ .Values.controller.config.alteon.timeout | quote }}
+            - name: BGP_ENABLED
+              value: {{ .Values.controller.config.bgp.enabled | quote }}
+            - name: BGP_AS_NUMBER
+              value: {{ .Values.controller.config.bgp.asNumber | quote }}
+            - name: VIP_POOL_START
+              value: {{ .Values.controller.config.vipPool.start }}
+            - name: VIP_POOL_END
+              value: {{ .Values.controller.config.vipPool.end }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/akc
+              readOnly: true
+          livenessProbe:
+            {{- toYaml .Values.deployment.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.deployment.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ include "akc-controller.configMapName" . }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

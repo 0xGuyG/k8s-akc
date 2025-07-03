@@ -1,0 +1,74 @@
+# Example: Multi-Port Service
+# This example shows a service exposing multiple ports with different configurations
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-port-app
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: multi-port-app
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: multi-port-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+              name: http
+            - containerPort: 8080
+              name: api
+            - containerPort: 9090
+              name: metrics
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-port-app
+  namespace: default
+  annotations:
+    # Radware AKC Annotations
+    akc.radware.com/lb-algo: sourceiphash            # Source IP hash for session persistence
+    akc.radware.com/lb-health-check: http            # HTTP health check
+    akc.radware.com/sslpol: multi-ssl-policy         # SSL policy
+    akc.radware.com/cert: multi-app-certificate      # Certificate
+    akc.radware.com/static-ip: "10.0.1.13"           # Static VIP
+    akc.radware.com/session-persistence: "cookie"     # Cookie-based persistence
+    akc.radware.com/compression: "enabled"            # Enable compression
+    akc.radware.com/caching: "enabled"               # Enable caching
+  labels:
+    AlteonDevice: "true"                              # Enable AKC processing
+spec:
+  type: LoadBalancer
+  selector:
+    app: multi-port-app
+  ports:
+    - name: https-web
+      port: 443
+      targetPort: 80
+      protocol: TCP
+    - name: https-api
+      port: 8443
+      targetPort: 8080
+      protocol: TCP
+    - name: metrics
+      port: 9443
+      targetPort: 9090
+      protocol: TCP
+  externalTrafficPolicy: Local
+  allocateLoadBalancerNodePorts: false

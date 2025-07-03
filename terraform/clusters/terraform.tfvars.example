@@ -1,0 +1,30 @@
+# Terraform Variables for Kubernetes Cluster
+# Copy this file to terraform.tfvars and customize for your environment
+
+# Cluster Configuration
+cluster_name   = "akc-cluster"
+node_count     = 2
+master_count   = 1
+
+# Network Configuration
+pod_cidr       = "192.168.0.0/16"
+service_cidr   = "10.96.0.0/12"
+bgp_as_number  = 65000
+
+# VM Configuration (Optimized for 4 vCPU, 16GB RAM host)
+master_memory  = 6144  # MB (6GB)
+master_vcpu    = 2
+worker_memory  = 3072  # MB (3GB each)
+worker_vcpu    = 1
+
+# Storage Configuration
+master_disk_size = 50  # GB
+worker_disk_size = 50  # GB
+
+# Image Configuration
+# Use latest CentOS Stream 9 cloud image
+vm_image_source = "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
+
+# Network Configuration
+network_cidr = "10.0.0.0/24"
+network_mode = "nat"

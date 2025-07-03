@@ -1,0 +1,19 @@
+apiVersion: v2
+name: akc-controller
+description: Alteon Kubernetes Connector Controller Helm Chart
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+keywords:
+  - alteon
+  - kubernetes
+  - load-balancer
+  - adc
+home: https://www.radware.com/products/alteon/
+sources:
+  - https://github.com/radware/akc-controller
+maintainers:
+  - name: Radware
+    email: support@radware.com
+annotations:
+  category: Networking

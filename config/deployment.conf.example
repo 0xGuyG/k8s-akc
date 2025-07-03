@@ -1,0 +1,33 @@
+# AKC Infrastructure Deployment Configuration
+# Copy this file to deployment.conf and customize for your environment
+
+# Cluster Configuration (Optimized for 4 vCPU, 16GB RAM)
+CLUSTER_NAME="akc-cluster"
+NODE_COUNT="2"
+
+# Alteon Configuration
+ALTEON_IP="10.0.0.100"
+ALTEON_PASSWORD="your-alteon-password-here"
+
+# Network Configuration
+VIP_POOL_START="10.0.1.10"
+VIP_POOL_END="10.0.1.100"
+BGP_AS_CALICO="65000"
+BGP_AS_ALTEON="65001"
+
+# Deployment Options
+DEPLOY_SAMPLES="false"
+DEPLOY_AGGREGATOR="false"
+
+# Advanced Options
+SSH_KEY_PATH="$HOME/.ssh/akc_deployment"
+SETUP_DIR="/opt/akc-infrastructure"
+
+# Monitoring Configuration
+PROMETHEUS_RETENTION="15d"
+GRAFANA_ADMIN_PASSWORD="admin123"
+
+# Security Configuration
+ENABLE_POD_SECURITY="true"
+ENABLE_NETWORK_POLICIES="true"
+ENABLE_RBAC="true"

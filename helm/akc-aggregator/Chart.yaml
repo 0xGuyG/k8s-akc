@@ -1,0 +1,24 @@
+apiVersion: v2
+name: akc-aggregator
+description: Alteon Kubernetes Connector Aggregator Helm Chart
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+keywords:
+  - alteon
+  - kubernetes
+  - load-balancer
+  - adc
+  - aggregator
+home: https://www.radware.com/products/alteon/
+sources:
+  - https://github.com/radware/akc-aggregator
+maintainers:
+  - name: Radware
+    email: support@radware.com
+annotations:
+  category: Networking
+dependencies:
+  - name: akc-controller
+    version: "1.0.0"
+    condition: controller.enabled

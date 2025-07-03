@@ -1,0 +1,351 @@
+# Pod Security Standards and Network Policies for AKC System
+# This file enforces security policies for the AKC components
+
+---
+# Network Policy for AKC Controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: akc-controller-network-policy
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc-controller
+    app.kubernetes.io/component: security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: akc-controller
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9114  # Metrics port
+  # Allow traffic from kube-system
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow traffic within akc-system namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: akc-system
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9114
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Kubernetes API server access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6443
+  # Allow Alteon ADC access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 22
+  # Allow BGP traffic
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 179
+
+---
+# Network Policy for AKC Aggregator
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: akc-aggregator-network-policy
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc-aggregator
+    app.kubernetes.io/component: security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: akc-aggregator
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9114  # Metrics port
+  # Allow traffic from kube-system
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow traffic within akc-system namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: akc-system
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9114
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Kubernetes API server access (multiple clusters)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6443
+  # Allow Alteon ADC access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 22
+
+---
+# Network Policy for monitoring access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: akc-monitoring-access
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow Prometheus scraping
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9114
+  # Allow Grafana access
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Security Context Constraints for AKC (if using OpenShift)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: akc-scc
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: security
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAsRange
+  uidRangeMin: 1000
+  uidRangeMax: 2000
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: RunAsAny
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+users:
+- system:serviceaccount:akc-system:akc-controller
+- system:serviceaccount:akc-system:akc-aggregator
+
+---
+# Pod Security Policy (deprecated but included for compatibility)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: akc-psp
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: security
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: false
+  seLinux:
+    rule: 'RunAsAny'
+
+---
+# Cluster Role for PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: akc-psp
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: security
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - akc-psp
+
+---
+# Cluster Role Binding for PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: akc-psp
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: security
+roleRef:
+  kind: ClusterRole
+  name: akc-psp
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: akc-controller
+  namespace: akc-system
+- kind: ServiceAccount
+  name: akc-aggregator
+  namespace: akc-system
+
+---
+# Resource Quota for AKC System
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: akc-system-quota
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: resource-management
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+    pods: "8"
+    persistentvolumeclaims: "3"
+    services: "5"
+    secrets: "8"
+    configmaps: "8"
+
+---
+# Limit Range for AKC System
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: akc-system-limits
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: resource-management
+spec:
+  limits:
+  - default:
+      cpu: 200m
+      memory: 256Mi
+    defaultRequest:
+      cpu: 50m
+      memory: 64Mi
+    type: Container
+  - max:
+      cpu: 500m
+      memory: 512Mi
+    min:
+      cpu: 25m
+      memory: 32Mi
+    type: Container
+  - max:
+      storage: 10Gi
+    min:
+      storage: 1Gi
+    type: PersistentVolumeClaim

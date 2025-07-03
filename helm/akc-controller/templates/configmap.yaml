@@ -1,0 +1,64 @@
+{{- if .Values.configMap.create -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "akc-controller.configMapName" . }}
+  namespace: {{ include "akc-controller.namespace" . }}
+  labels:
+    {{- include "akc-controller.labels" . | nindent 4 }}
+data:
+  {{- with .Values.configMap.data }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+  controller.yaml: |
+    apiVersion: v1
+    kind: Config
+    controller:
+      namespace: {{ .Values.controller.config.akc.namespace }}
+      logLevel: {{ .Values.controller.config.akc.logLevel }}
+      syncInterval: {{ .Values.controller.config.akc.syncInterval }}
+      leaderElection:
+        enabled: true
+        namespace: {{ .Values.controller.config.akc.namespace }}
+        name: akc-controller-leader
+    alteon:
+      host: {{ .Values.controller.config.alteon.host }}
+      port: {{ .Values.controller.config.alteon.port }}
+      username: {{ .Values.controller.config.alteon.username }}
+      ssl: {{ .Values.controller.config.alteon.ssl }}
+      timeout: {{ .Values.controller.config.alteon.timeout }}
+      maxRetries: 3
+      retryDelay: 5s
+    bgp:
+      enabled: {{ .Values.controller.config.bgp.enabled }}
+      asNumber: {{ .Values.controller.config.bgp.asNumber }}
+      routeReflector:
+        enabled: false
+        clusterID: "1.0.0.1"
+    vipPool:
+      start: {{ .Values.controller.config.vipPool.start }}
+      end: {{ .Values.controller.config.vipPool.end }}
+      allocation: sequential
+    ssl:
+      enabled: {{ .Values.controller.config.ssl.enabled }}
+      defaultPolicy: {{ .Values.controller.config.ssl.defaultPolicy }}
+      certificateManager:
+        enabled: true
+        namespace: {{ .Values.controller.config.akc.namespace }}
+    waf:
+      enabled: {{ .Values.controller.config.waf.enabled }}
+      defaultPolicy: {{ .Values.controller.config.waf.defaultPolicy }}
+    healthCheck:
+      enabled: true
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    metrics:
+      enabled: true
+      port: 9114
+      path: /metrics
+    webhook:
+      enabled: false
+      port: 9443
+      certDir: /tmp/k8s-webhook-server/serving-certs
+{{- end }}

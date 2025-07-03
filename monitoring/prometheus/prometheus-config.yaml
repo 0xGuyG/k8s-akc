@@ -1,0 +1,420 @@
+# Prometheus Configuration for AKC Monitoring
+# This configuration monitors AKC components, Alteon ADC, and Kubernetes infrastructure
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'akc-cluster'
+        environment: 'production'
+
+    # Alertmanager configuration
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+
+    # Load alerting rules
+    rule_files:
+      - "rules/*.yml"
+
+    # Scrape configurations
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+        scrape_interval: 5s
+
+      # Kubernetes API server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - default
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Kubernetes nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # Kubernetes node exporters
+      - job_name: 'kubernetes-nodes-cadvisor'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        metrics_path: /metrics/cadvisor
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # Kubernetes service endpoints
+      - job_name: 'kubernetes-service-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+
+      # AKC Controller metrics
+      - job_name: 'akc-controller'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - akc-system
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: akc-controller;metrics
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+        scrape_interval: 30s
+        metrics_path: /metrics
+
+      # AKC Aggregator metrics
+      - job_name: 'akc-aggregator'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - akc-system
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: akc-aggregator;metrics
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+        scrape_interval: 30s
+        metrics_path: /metrics
+
+      # Alteon ADC metrics
+      - job_name: 'alteon-adc'
+        static_configs:
+          - targets: ['10.0.0.100:9114']
+        scrape_interval: 30s
+        metrics_path: /metrics
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+            regex: '([^:]+):.*'
+            replacement: '${1}'
+          - target_label: job
+            replacement: 'alteon-adc'
+
+      # Calico metrics
+      - job_name: 'calico-node'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - calico-system
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_k8s_app]
+            action: keep
+            regex: calico-node
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: '([^:]+):.*'
+            replacement: '${1}:9091'
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+        scrape_interval: 30s
+
+      # Calico Typha metrics
+      - job_name: 'calico-typha'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - calico-system
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_k8s_app]
+            action: keep
+            regex: calico-typha
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: '([^:]+):.*'
+            replacement: '${1}:9093'
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+        scrape_interval: 30s
+
+      # BGP monitoring (if available)
+      - job_name: 'bgp-exporter'
+        static_configs:
+          - targets: ['bgp-exporter:9179']
+        scrape_interval: 30s
+        relabel_configs:
+          - target_label: job
+            replacement: 'bgp-exporter'
+
+      # Node exporter (if deployed)
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - monitoring
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: node-exporter
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+        scrape_interval: 30s
+
+      # Kube-state-metrics
+      - job_name: 'kube-state-metrics'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - monitoring
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: kube-state-metrics
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+        scrape_interval: 30s
+
+    # Remote write configuration (optional)
+    # remote_write:
+    #   - url: "https://remote-prometheus.example.com/api/v1/write"
+    #     basic_auth:
+    #       username: "prometheus"
+    #       password: "secret"
+
+    # Remote read configuration (optional)
+    # remote_read:
+    #   - url: "https://remote-prometheus.example.com/api/v1/read"
+    #     basic_auth:
+    #       username: "prometheus"
+    #       password: "secret"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: rules
+data:
+  akc-rules.yml: |
+    groups:
+      - name: akc.rules
+        rules:
+          # AKC Controller availability
+          - alert: AKCControllerDown
+            expr: up{job="akc-controller"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "AKC Controller is down"
+              description: "AKC Controller has been down for more than 5 minutes."
+
+          # AKC Aggregator availability
+          - alert: AKCAggregatorDown
+            expr: up{job="akc-aggregator"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "AKC Aggregator is down"
+              description: "AKC Aggregator has been down for more than 5 minutes."
+
+          # Alteon ADC connectivity
+          - alert: AlteonADCDown
+            expr: up{job="alteon-adc"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Alteon ADC is unreachable"
+              description: "Cannot scrape metrics from Alteon ADC for more than 2 minutes."
+
+          # BGP peering issues
+          - alert: BGPPeerDown
+            expr: increase(bgp_peer_state_changes_total[10m]) > 5
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "BGP peer flapping detected"
+              description: "BGP peer {{ $labels.peer }} is flapping ({{ $value }} state changes in 10 minutes)."
+
+          # High memory usage
+          - alert: AKCHighMemoryUsage
+            expr: (container_memory_usage_bytes{pod=~"akc-.*"} / container_spec_memory_limit_bytes{pod=~"akc-.*"}) * 100 > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "AKC component high memory usage"
+              description: "AKC component {{ $labels.pod }} is using {{ $value }}% of available memory."
+
+          # High CPU usage
+          - alert: AKCHighCPUUsage
+            expr: (rate(container_cpu_usage_seconds_total{pod=~"akc-.*"}[5m]) / container_spec_cpu_quota{pod=~"akc-.*"} * container_spec_cpu_period{pod=~"akc-.*"}) * 100 > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "AKC component high CPU usage"
+              description: "AKC component {{ $labels.pod }} is using {{ $value }}% of available CPU."
+
+  kubernetes-rules.yml: |
+    groups:
+      - name: kubernetes.rules
+        rules:
+          # Node disk space
+          - alert: NodeDiskSpaceFull
+            expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node disk space is running low"
+              description: "Node {{ $labels.instance }} has only {{ $value }}% disk space remaining."
+
+          # Node memory usage
+          - alert: NodeHighMemoryUsage
+            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node memory usage is high"
+              description: "Node {{ $labels.instance }} memory usage is {{ $value }}%."
+
+          # Pod restart rate
+          - alert: PodRestartHigh
+            expr: increase(kube_pod_container_status_restarts_total[1h]) > 5
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod restarting frequently"
+              description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has restarted {{ $value }} times in the last hour."
+
+  calico-rules.yml: |
+    groups:
+      - name: calico.rules
+        rules:
+          # Calico node down
+          - alert: CalicoNodeDown
+            expr: up{job="calico-node"} == 0
+            for: 3m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Calico node is down"
+              description: "Calico node {{ $labels.instance }} has been down for more than 3 minutes."
+
+          # Felix dataplane sync issues
+          - alert: FelixDataplaneSyncError
+            expr: increase(felix_exec_time_seconds_count{error="true"}[10m]) > 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Felix dataplane sync errors"
+              description: "Felix on {{ $labels.instance }} is experiencing dataplane sync errors."

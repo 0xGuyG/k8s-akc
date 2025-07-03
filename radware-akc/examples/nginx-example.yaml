@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-test
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: k8s-test
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: k8s-test
+    spec:
+      containers:
+        - name: k8s-test
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    akc.radware.com/lb-algo: roundrobin
+    akc.radware.com/lb-health-check: http
+    akc.radware.com/sslpol: Outbound_FE_SSL_Inspection
+    akc.radware.com/cert: apps.certificate
+  labels:
+    AlteonDevice: "true"
+  name: k8s-test
+  namespace: default
+spec:
+  ports:
+    - name: https
+      port: 443
+      targetPort: 80
+  selector:
+    app: k8s-test
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  allocateLoadBalancerNodePorts: false

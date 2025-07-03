@@ -1,0 +1,408 @@
+# Sample Services with AKC Annotations
+# These examples demonstrate various AKC integration patterns
+
+---
+# Namespace for demo applications
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: akc-demo
+  labels:
+    name: akc-demo
+
+---
+# Simple Web Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: akc-demo
+  labels:
+    app: web-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# LoadBalancer Service with AKC Static IP
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app-lb
+  namespace: akc-demo
+  labels:
+    app: web-app
+    AlteonDevice: "true"  # Enable AKC processing
+  annotations:
+    # Radware AKC annotations (v1.6.0 format)
+    akc.radware.com/static-ip: "10.0.1.10"
+    akc.radware.com/sslpol: "default-ssl-policy"
+    akc.radware.com/cert: "web-app-cert"
+    akc.radware.com/lb-health-check: "http"
+    akc.radware.com/lb-algo: "roundrobin"
+    akc.radware.com/session-persistence: "source-ip"
+    akc.radware.com/connection-timeout: "30"
+    akc.radware.com/max-connections: "1000"
+spec:
+  type: LoadBalancer
+  selector:
+    app: web-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 80
+    protocol: TCP
+
+---
+# API Service with WAF Protection
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  namespace: akc-demo
+  labels:
+    app: api-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-service
+  template:
+    metadata:
+      labels:
+        app: api-service
+    spec:
+      containers:
+      - name: api
+        image: nginx:alpine
+        ports:
+        - containerPort: 8080
+        env:
+        - name: API_VERSION
+          value: "v1.0"
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+
+---
+# API Service with WAF and SSL
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service-lb
+  namespace: akc-demo
+  labels:
+    app: api-service
+  annotations:
+    # AKC specific annotations for API protection
+    akc.radware.com/static-ip: "10.0.1.11"
+    akc.radware.com/ssl-policy: "strict-ssl-policy"
+    akc.radware.com/ssl-cert: "api-service-cert"
+    akc.radware.com/securepath-policy: "api-waf-policy"
+    akc.radware.com/rate-limiting: "100-per-minute"
+    akc.radware.com/ddos-protection: "enabled"
+    akc.radware.com/geo-blocking: "enabled"
+    akc.radware.com/whitelist-ips: "10.0.0.0/8,192.168.0.0/16"
+spec:
+  type: LoadBalancer
+  selector:
+    app: api-service
+  ports:
+  - name: https
+    port: 443
+    targetPort: 8080
+    protocol: TCP
+
+---
+# Database Service (Internal)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: akc-demo
+  labels:
+    app: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13-alpine
+        env:
+        - name: POSTGRES_DB
+          value: "appdb"
+        - name: POSTGRES_USER
+          value: "appuser"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: password
+        ports:
+        - containerPort: 5432
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+---
+# Database Service (ClusterIP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: akc-demo
+  labels:
+    app: database
+spec:
+  type: ClusterIP
+  selector:
+    app: database
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+
+---
+# Database Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-secret
+  namespace: akc-demo
+type: Opaque
+data:
+  password: cGFzc3dvcmQxMjM=  # base64 encoded "password123"
+
+---
+# Multi-Protocol Service (TCP and UDP)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-protocol-app
+  namespace: akc-demo
+  labels:
+    app: multi-protocol-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: multi-protocol-app
+  template:
+    metadata:
+      labels:
+        app: multi-protocol-app
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        - containerPort: 8080
+        - containerPort: 9090
+          protocol: UDP
+
+---
+# Multi-Protocol LoadBalancer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-protocol-lb
+  namespace: akc-demo
+  labels:
+    app: multi-protocol-app
+  annotations:
+    akc.radware.com/static-ip: "10.0.1.12"
+    akc.radware.com/tcp-health-check: "enabled"
+    akc.radware.com/udp-health-check: "enabled"
+    akc.radware.com/load-balancing-method: "least-connections"
+spec:
+  type: LoadBalancer
+  selector:
+    app: multi-protocol-app
+  ports:
+  - name: web
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: api
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: UDP
+
+---
+# Microservice with Service Mesh Integration
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: microservice-a
+  namespace: akc-demo
+  labels:
+    app: microservice-a
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: microservice-a
+  template:
+    metadata:
+      labels:
+        app: microservice-a
+      annotations:
+        # Istio sidecar injection
+        sidecar.istio.io/inject: "true"
+        # AKC integration with service mesh
+        akc.radware.com/service-mesh: "istio"
+        akc.radware.com/mesh-mode: "chained"
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+---
+# Microservice LoadBalancer with Service Mesh
+apiVersion: v1
+kind: Service
+metadata:
+  name: microservice-a-lb
+  namespace: akc-demo
+  labels:
+    app: microservice-a
+  annotations:
+    akc.radware.com/static-ip: "10.0.1.13"
+    akc.radware.com/service-mesh: "istio"
+    akc.radware.com/mesh-mode: "chained"
+    akc.radware.com/preserve-mtls: "true"
+    akc.radware.com/ssl-policy: "service-mesh-ssl"
+spec:
+  type: LoadBalancer
+  selector:
+    app: microservice-a
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+
+---
+# Ingress Resource with AKC Integration
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress
+  namespace: akc-demo
+  labels:
+    app: demo-ingress
+  annotations:
+    # AKC Ingress annotations
+    akc.radware.com/static-ip: "10.0.1.14"
+    akc.radware.com/ssl-policy: "ingress-ssl-policy"
+    akc.radware.com/ssl-cert: "demo-wildcard-cert"
+    akc.radware.com/securepath-policy: "ingress-waf-policy"
+    akc.radware.com/compression: "enabled"
+    akc.radware.com/caching: "enabled"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - web.example.com
+    - api.example.com
+    secretName: demo-tls-secret
+  rules:
+  - host: web.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web-app-lb
+            port:
+              number: 80
+  - host: api.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service-lb
+            port:
+              number: 443
+
+---
+# TLS Secret for Ingress
+apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-tls-secret
+  namespace: akc-demo
+type: kubernetes.io/tls
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t  # base64 encoded certificate
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t   # base64 encoded private key

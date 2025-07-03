@@ -1,0 +1,250 @@
+# RBAC Configuration for AKC System
+# This file contains all RBAC resources for the AKC system
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: akc-system
+  labels:
+    name: akc-system
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    pod-security.kubernetes.io/enforce-version: v1.25
+
+---
+# Service Account for AKC Controller
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: akc-controller
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc-controller
+    app.kubernetes.io/component: controller
+automountServiceAccountToken: true
+
+---
+# Service Account for AKC Aggregator
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: akc-aggregator
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc-aggregator
+    app.kubernetes.io/component: aggregator
+automountServiceAccountToken: true
+
+---
+# Cluster Role for AKC Controller
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: akc-controller
+  labels:
+    app.kubernetes.io/name: akc-controller
+    app.kubernetes.io/component: controller
+rules:
+# Core resources
+- apiGroups: [""]
+  resources: ["services", "endpoints", "pods", "nodes", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+# Apps resources
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+# Networking resources
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Extensions (deprecated but still used)
+- apiGroups: ["extensions"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+# Calico resources
+- apiGroups: ["projectcalico.org"]
+  resources: ["bgppeers", "bgpconfigurations", "ippools", "felixconfigurations"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Custom resources
+- apiGroups: ["akc.radware.com"]
+  resources: ["*"]
+  verbs: ["*"]
+# Metrics
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# Cluster Role for AKC Aggregator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: akc-aggregator
+  labels:
+    app.kubernetes.io/name: akc-aggregator
+    app.kubernetes.io/component: aggregator
+rules:
+# Core resources
+- apiGroups: [""]
+  resources: ["services", "endpoints", "pods", "nodes", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+# Apps resources
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+# Networking resources
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Custom resources
+- apiGroups: ["akc.radware.com"]
+  resources: ["*"]
+  verbs: ["*"]
+# Cross-cluster access
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Cluster Role Binding for AKC Controller
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: akc-controller
+  labels:
+    app.kubernetes.io/name: akc-controller
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: akc-controller
+subjects:
+- kind: ServiceAccount
+  name: akc-controller
+  namespace: akc-system
+
+---
+# Cluster Role Binding for AKC Aggregator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: akc-aggregator
+  labels:
+    app.kubernetes.io/name: akc-aggregator
+    app.kubernetes.io/component: aggregator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: akc-aggregator
+subjects:
+- kind: ServiceAccount
+  name: akc-aggregator
+  namespace: akc-system
+
+---
+# Role for Leader Election
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: akc-leader-election
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: leader-election
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+
+---
+# Role Binding for Leader Election - Controller
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: akc-controller-leader-election
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc-controller
+    app.kubernetes.io/component: leader-election
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: akc-leader-election
+subjects:
+- kind: ServiceAccount
+  name: akc-controller
+  namespace: akc-system
+
+---
+# Role Binding for Leader Election - Aggregator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: akc-aggregator-leader-election
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc-aggregator
+    app.kubernetes.io/component: leader-election
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: akc-leader-election
+subjects:
+- kind: ServiceAccount
+  name: akc-aggregator
+  namespace: akc-system
+
+---
+# Role for Monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: akc-monitoring
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: monitoring
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Role Binding for Monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: akc-monitoring
+  namespace: akc-system
+  labels:
+    app.kubernetes.io/name: akc
+    app.kubernetes.io/component: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: akc-monitoring
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+- kind: ServiceAccount
+  name: grafana
+  namespace: monitoring

@@ -1,0 +1,76 @@
+# Example: Web Application with SSL Termination
+# This example shows a web application with AKC SSL termination and health checks
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app-ssl
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: web-app-ssl
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: web-app-ssl
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 3
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app-ssl
+  namespace: default
+  annotations:
+    # Radware AKC Annotations
+    akc.radware.com/lb-algo: roundrobin              # Load balancing algorithm
+    akc.radware.com/lb-health-check: http            # HTTP health check
+    akc.radware.com/sslpol: web-ssl-policy           # SSL policy name on Alteon
+    akc.radware.com/cert: web-app-certificate        # Certificate name on Alteon
+    akc.radware.com/static-ip: "10.0.1.11"           # Static VIP from pool
+    akc.radware.com/connection-timeout: "30"         # Connection timeout (seconds)
+    akc.radware.com/max-connections: "1000"          # Max concurrent connections
+  labels:
+    AlteonDevice: "true"                              # Enable AKC processing
+spec:
+  type: LoadBalancer
+  selector:
+    app: web-app-ssl
+  ports:
+    - name: https
+      port: 443
+      targetPort: 80
+      protocol: TCP
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+  externalTrafficPolicy: Local                        # Preserve client source IP
+  allocateLoadBalancerNodePorts: false                # BGP mode (no NodePorts)

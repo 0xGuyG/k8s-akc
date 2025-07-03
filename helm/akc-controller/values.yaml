@@ -1,0 +1,218 @@
+# Default values for akc-controller
+# This is a YAML-formatted file
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# AKC Controller configuration
+controller:
+  image:
+    registry: docker.io
+    repository: radware/akc-controller
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  
+  # Controller configuration
+  config:
+    # Alteon ADC connection settings
+    alteon:
+      host: "10.0.0.100"
+      port: 443
+      username: "admin"
+      password: "admin"
+      ssl: true
+      timeout: 30
+    
+    # AKC specific settings
+    akc:
+      namespace: "akc-system"
+      configMapName: "akc-config"
+      logLevel: "info"
+      syncInterval: "30s"
+      
+    # BGP configuration
+    bgp:
+      enabled: true
+      asNumber: 65001
+      
+    # VIP pool configuration
+    vipPool:
+      start: "10.0.1.10"
+      end: "10.0.1.100"
+      
+    # SSL/TLS configuration
+    ssl:
+      enabled: true
+      defaultPolicy: "default-ssl-policy"
+      
+    # WAF configuration
+    waf:
+      enabled: true
+      defaultPolicy: "default-waf-policy"
+
+  # Resource limits and requests (Optimized for smaller systems)
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+  # Node selector
+  nodeSelector: {}
+
+  # Tolerations
+  tolerations: []
+
+  # Affinity
+  affinity: {}
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroup: 1001
+
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroup: 1001
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  annotations: {}
+
+# ServiceMonitor for Prometheus
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  annotations: {}
+
+# RBAC configuration
+rbac:
+  create: true
+  serviceAccountName: akc-controller
+  
+  # Additional RBAC rules
+  rules:
+    - apiGroups: [""]
+      resources: ["services", "endpoints", "configmaps", "secrets"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "replicasets"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["ingresses"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["extensions"]
+      resources: ["ingresses"]
+      verbs: ["get", "list", "watch"]
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Horizontal Pod Autoscaler
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Network policies
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+        - namespaceSelector:
+            matchLabels:
+              name: akc-system
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9443
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+
+# Deployment configuration
+deployment:
+  replicaCount: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  
+  # Pod annotations
+  podAnnotations: {}
+  
+  # Pod labels
+  podLabels: {}
+  
+  # Liveness probe
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  # Readiness probe
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# ConfigMap for AKC configuration
+configMap:
+  create: true
+  data:
+    akc-config.yaml: |
+      alteon:
+        host: "10.0.0.100"
+        port: 443
+        username: "admin"
+        ssl: true
+        timeout: 30
+      controller:
+        namespace: "akc-system"
+        logLevel: "info"
+        syncInterval: "30s"
+      bgp:
+        enabled: true
+        asNumber: 65001
+      vipPool:
+        start: "10.0.1.10"
+        end: "10.0.1.100"
+
+# Secret for Alteon credentials
+secret:
+  create: true
+  data:
+    alteon-password: "YWRtaW4="  # base64 encoded "admin"

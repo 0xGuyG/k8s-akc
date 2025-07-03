@@ -1,0 +1,105 @@
+{{- if .Values.rbac.create -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "akc-controller.serviceAccountName" . }}
+  namespace: {{ include "akc-controller.namespace" . }}
+  labels:
+    {{- include "akc-controller.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "akc-controller.fullname" . }}
+  labels:
+    {{- include "akc-controller.labels" . | nindent 4 }}
+rules:
+  # Core resources
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "configmaps", "secrets", "nodes", "pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  
+  # Apps resources
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Networking resources
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Extensions (deprecated but still used)
+  - apiGroups: ["extensions"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  
+  # Custom resources for AKC
+  - apiGroups: ["akc.radware.com"]
+    resources: ["*"]
+    verbs: ["*"]
+  
+  # Calico resources for BGP management
+  - apiGroups: ["projectcalico.org"]
+    resources: ["bgppeers", "bgpconfigurations", "ippools"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Additional rules from values
+  {{- with .Values.rbac.rules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "akc-controller.fullname" . }}
+  labels:
+    {{- include "akc-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "akc-controller.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "akc-controller.serviceAccountName" . }}
+    namespace: {{ include "akc-controller.namespace" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "akc-controller.fullname" . }}-leader-election
+  namespace: {{ include "akc-controller.namespace" . }}
+  labels:
+    {{- include "akc-controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "akc-controller.fullname" . }}-leader-election
+  namespace: {{ include "akc-controller.namespace" . }}
+  labels:
+    {{- include "akc-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "akc-controller.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "akc-controller.serviceAccountName" . }}
+    namespace: {{ include "akc-controller.namespace" . }}
+{{- end }}

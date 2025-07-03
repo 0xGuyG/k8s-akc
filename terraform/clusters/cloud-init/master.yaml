@@ -1,0 +1,149 @@
+#cloud-config
+hostname: ${cluster_name}-master
+users:
+  - default
+  - name: k8s
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7... # Replace with your public key
+    shell: /bin/bash
+    groups: wheel
+
+package_upgrade: true
+packages:
+  - container-selinux
+  - curl
+  - wget
+  - git
+  - vim
+  - htop
+  - net-tools
+
+write_files:
+  - path: /etc/modules-load.d/containerd.conf
+    content: |
+      overlay
+      br_netfilter
+  - path: /etc/sysctl.d/99-kubernetes-cri.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables = 1
+      net.ipv4.ip_forward = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+  - path: /etc/yum.repos.d/kubernetes.repo
+    content: |
+      [kubernetes]
+      name=Kubernetes
+      baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+      enabled=1
+      gpgcheck=1
+      repo_gpgcheck=1
+      gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+  - path: /etc/containers/storage.conf
+    content: |
+      [storage]
+      driver = "overlay"
+      runroot = "/run/containers/storage"
+      graphroot = "/var/lib/containers/storage"
+      [storage.options]
+      additionalimagestores = []
+      [storage.options.overlay]
+      mountopt = "nodev,metacopy=on"
+  - path: /etc/containers/containers.conf
+    content: |
+      [containers]
+      log_driver = "journald"
+      log_size_max = 100000000
+      cgroup_manager = "systemd"
+      [engine]
+      cgroup_manager = "systemd"
+      events_logger = "journald"
+      runtime = "crun"
+  - path: /root/init-cluster.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      
+      # Initialize Kubernetes cluster
+      kubeadm init \
+        --pod-network-cidr=${pod_cidr} \
+        --service-cidr=${service_cidr} \
+        --apiserver-advertise-address=$(hostname -I | awk '{print $1}') \
+        --control-plane-endpoint=$(hostname -I | awk '{print $1}') \
+        --upload-certs
+      
+      # Configure kubectl for root
+      mkdir -p /root/.kube
+      cp -i /etc/kubernetes/admin.conf /root/.kube/config
+      chown root:root /root/.kube/config
+      
+      # Configure kubectl for k8s user
+      mkdir -p /home/k8s/.kube
+      cp -i /etc/kubernetes/admin.conf /home/k8s/.kube/config
+      chown k8s:k8s /home/k8s/.kube/config
+      
+      # Install Calico CNI with BGP
+      kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.0/manifests/tigera-operator.yaml
+      
+      # Create Calico configuration with BGP
+      cat <<EOF | kubectl apply -f -
+      apiVersion: operator.tigera.io/v1
+      kind: Installation
+      metadata:
+        name: default
+      spec:
+        calicoNetwork:
+          ipPools:
+          - blockSize: 26
+            cidr: ${pod_cidr}
+            encapsulation: None
+            natOutgoing: Enabled
+            nodeSelector: all()
+          bgp: Enabled
+        nodeAddressAutodetection:
+          interface: eth0
+      ---
+      apiVersion: operator.tigera.io/v1
+      kind: APIServer
+      metadata:
+        name: default
+      spec: {}
+      ---
+      apiVersion: projectcalico.org/v3
+      kind: BGPConfiguration
+      metadata:
+        name: default
+      spec:
+        logSeverityScreen: Info
+        nodeToNodeMeshEnabled: true
+        asNumber: ${bgp_as_number}
+        serviceLoadBalancerIPs:
+        - cidr: 10.96.0.0/12
+      EOF
+      
+      # Wait for Calico to be ready
+      kubectl wait --for=condition=Ready pods -l k8s-app=tigera-operator -n tigera-operator --timeout=300s
+      kubectl wait --for=condition=Ready pods -l k8s-app=calico-node -n calico-system --timeout=300s
+      
+      # Generate join command
+      kubeadm token create --print-join-command > /tmp/join-command.sh
+      chmod +x /tmp/join-command.sh
+      
+      echo "Kubernetes master initialized successfully"
+      echo "Join command saved to /tmp/join-command.sh"
+
+runcmd:
+  - modprobe overlay
+  - modprobe br_netfilter
+  - sysctl --system
+  - setenforce 0
+  - sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+  - dnf install -y podman crun
+  - systemctl enable podman.socket
+  - systemctl start podman.socket
+  - dnf install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+  - systemctl enable kubelet
+  - systemctl start kubelet
+  - /root/init-cluster.sh
+
+final_message: "Kubernetes master node is ready!"

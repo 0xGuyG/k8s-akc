@@ -1,0 +1,241 @@
+# Default values for akc-aggregator
+# This is a YAML-formatted file
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# AKC Aggregator configuration
+aggregator:
+  image:
+    registry: docker.io
+    repository: radware/akc-aggregator
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  
+  # Aggregator configuration
+  config:
+    # Multi-cluster management
+    clusters:
+      - name: "cluster-1"
+        endpoint: "https://cluster1.example.com:6443"
+        token: ""
+        namespace: "akc-system"
+      - name: "cluster-2"
+        endpoint: "https://cluster2.example.com:6443"
+        token: ""
+        namespace: "akc-system"
+    
+    # Alteon ADC connection settings
+    alteon:
+      host: "10.0.0.100"
+      port: 443
+      username: "admin"
+      password: "admin"
+      ssl: true
+      timeout: 30
+      
+    # Aggregator specific settings
+    aggregator:
+      namespace: "akc-system"
+      configMapName: "akc-aggregator-config"
+      logLevel: "info"
+      syncInterval: "60s"
+      
+    # Global load balancing configuration
+    gslb:
+      enabled: true
+      healthCheckInterval: "30s"
+      failoverThreshold: 3
+      
+    # Cross-cluster networking
+    networking:
+      crossClusterTraffic: true
+      vpnEnabled: false
+      
+    # Service discovery
+    discovery:
+      enabled: true
+      multiCluster: true
+      
+    # Metrics aggregation
+    metrics:
+      enabled: true
+      aggregationInterval: "60s"
+
+  # Resource limits and requests (Optimized for smaller systems)
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Node selector
+  nodeSelector: {}
+
+  # Tolerations
+  tolerations: []
+
+  # Affinity
+  affinity: {}
+
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroup: 1001
+
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroup: 1001
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  annotations: {}
+
+# ServiceMonitor for Prometheus
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  annotations: {}
+
+# RBAC configuration
+rbac:
+  create: true
+  serviceAccountName: akc-aggregator
+  
+  # Additional RBAC rules for multi-cluster access
+  rules:
+    - apiGroups: [""]
+      resources: ["services", "endpoints", "configmaps", "secrets", "nodes"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "replicasets"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["ingresses"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["akc.radware.com"]
+      resources: ["*"]
+      verbs: ["*"]
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Horizontal Pod Autoscaler
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Network policies
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+        - namespaceSelector:
+            matchLabels:
+              name: akc-system
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9443
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+
+# Deployment configuration
+deployment:
+  replicaCount: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  
+  # Pod annotations
+  podAnnotations: {}
+  
+  # Pod labels
+  podLabels: {}
+  
+  # Liveness probe
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  # Readiness probe
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# ConfigMap for AKC Aggregator configuration
+configMap:
+  create: true
+  data:
+    akc-aggregator-config.yaml: |
+      clusters:
+        - name: "cluster-1"
+          endpoint: "https://cluster1.example.com:6443"
+          namespace: "akc-system"
+        - name: "cluster-2"
+          endpoint: "https://cluster2.example.com:6443"
+          namespace: "akc-system"
+      alteon:
+        host: "10.0.0.100"
+        port: 443
+        username: "admin"
+        ssl: true
+        timeout: 30
+      aggregator:
+        namespace: "akc-system"
+        logLevel: "info"
+        syncInterval: "60s"
+      gslb:
+        enabled: true
+        healthCheckInterval: "30s"
+        failoverThreshold: 3
+
+# Secret for cluster tokens and credentials
+secret:
+  create: true
+  data:
+    alteon-password: "YWRtaW4="  # base64 encoded "admin"
+    cluster-1-token: ""  # base64 encoded token
+    cluster-2-token: ""  # base64 encoded token
+
+# Controller dependency (optional)
+controller:
+  enabled: false
